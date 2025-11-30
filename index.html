@@ -1,230 +1,39 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WebXR + Three.js — Hit Test (coco.glb)</title>
-  <style>
-    body { margin:0; font-family: sans-serif; background:#111; color:#eee; }
-    #info {
-      position: fixed; left: 12px; top: 12px; z-index: 10;
-      background: rgba(0,0,0,0.6); padding:10px 12px; border-radius:8px;
-      max-width: 320px; font-size:14px;
-    }
-    #enterAR { margin-top:8px; padding:8px 10px; background:#0a84ff; color:white; border:none; border-radius:6px; cursor:pointer; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>لعبة العناصر - إنشاء غرفة</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<script src="firebaseConfig.js"></script>
+<style>
+  body { font-family: sans-serif; text-align: center; padding: 50px; }
+  input, button { padding: 10px; margin: 5px; font-size: 16px; }
+</style>
 </head>
 <body>
-  <div id="info">
-    <div id="status">جارٍ التحقق من دعم AR...</div>
-    <button id="enterAR" style="display:none">تشغيل AR</button>
-  </div>
+<h1>إنشاء غرفة للعب مع صديق</h1>
+<input id="playerName" placeholder="اكتب اسمك">
+<br>
+<button onclick="createRoom()">إنشاء غرفة</button>
 
-  <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.158.0/build/three.module.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'https://unpkg.com/three@0.158.0/examples/jsm/webxr/ARButton.js';
+<script>
+function createRoom() {
+  const name = document.getElementById("playerName").value.trim();
+  if (!name) return alert("الرجاء كتابة اسمك!");
 
-    const status = document.getElementById('status');
-    const enterARBtn = document.getElementById('enterAR');
+  const roomId = Math.random().toString(36).substr(2, 6);
 
-    // Basic three.js scene (renders to XR session)
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera();
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    renderer.setPixelRatio(window.devicePixelRatio);
-    document.body.appendChild(renderer.domElement);
-
-    // light
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
-
-    // GLTF loader
-    const loader = new GLTFLoader();
-
-    // Object container for the model
-    const modelRoot = new THREE.Group();
-    modelRoot.visible = false; // until placed
-    scene.add(modelRoot);
-
-    // Load coco.glb from project root
-    loader.load('/coco.glb', (gltf) => {
-      const model = gltf.scene || gltf.scenes[0];
-      // scale and center if needed
-      model.traverse((c) => {
-        if (c.isMesh) {
-          c.castShadow = true;
-        }
-      });
-      model.scale.setScalar(0.5); // tune as needed
-      model.position.set(0, 0, 0);
-      modelRoot.add(model);
-      console.log('coco.glb loaded');
-    }, undefined, (err) => {
-      console.error('failed to load coco.glb', err);
-      status.textContent = 'خطأ: لم أتمكن من تحميل coco.glb — تأكد أنه في /coco.glb';
-    });
-
-    // Raycast hit-test variables
-    let xrSession = null;
-    let hitTestSource = null;
-    let localReferenceSpace = null;
-    let viewerSpace = null;
-    let placementMode = 'none'; // 'hit' | 'fallback'
-
-    // Feature-detect WebXR immersive-ar support
-    async function initXRCheck() {
-      if (navigator.xr) {
-        try {
-          const supported = await navigator.xr.isSessionSupported('immersive-ar');
-          if (supported) {
-            status.textContent = 'جهازك يدعم immersive-ar — اضغط "تشغيل AR" للبدء';
-            enterARBtn.style.display = 'inline-block';
-            enterARBtn.onclick = startAR;
-            // Also append ARButton for convenience (optional)
-            document.body.appendChild( ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }) );
-            return;
-          } else {
-            status.textContent = 'immersive-ar غير مدعوم في هذا المتصفح/الجهاز. سأحاول لاحقًا وضع fallback.';
-            enterARBtn.style.display = 'inline-block';
-            enterARBtn.textContent = 'فتح AR (فقط إن أمكن)';
-            enterARBtn.onclick = startAR; // still attempt (polyfill/emulator)
-          }
-        } catch (e) {
-          console.warn('isSessionSupported failed', e);
-          status.textContent = 'تعذر التحقق من دعم AR: ' + (e && e.message ? e.message : e);
-          enterARBtn.style.display = 'inline-block';
-          enterARBtn.onclick = startAR;
-        }
-      } else {
-        status.textContent = 'المتصفح لا يدعم WebXR. تحتاج متصفحًا يدعم WebXR/AR.';
-      }
+  firebase.database().ref("rooms/" + roomId).set({
+    players: {
+      p1: { name: name, score: 0, choice: null },
+      p2: { name: null, score: 0, choice: null }
     }
+  });
 
-    // Start AR session (requests hit-test feature but will fallback)
-    async function startAR() {
-      enterARBtn.disabled = true;
-      status.textContent = 'يُحاول بدء جلسة AR...';
-
-      try {
-        xrSession = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['local', 'hit-test'], // ask for hit-test
-          optionalFeatures: ['dom-overlay', 'anchors', 'light-estimation'],
-          domOverlay: { root: document.body }
-        });
-
-        // set renderer's xr session
-        renderer.xr.setSession(xrSession);
-
-        // reference spaces
-        localReferenceSpace = await xrSession.requestReferenceSpace('local');
-        viewerSpace = await xrSession.requestReferenceSpace('viewer');
-
-        // request hit test source (may fail if device doesn't support)
-        try {
-          hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
-          placementMode = 'hit';
-          status.textContent = 'تم تفعيل Hit Test — انقر على الشاشة لوضع النموذج على الأرض.';
-        } catch (hitErr) {
-          console.warn('Hit test not available:', hitErr);
-          // fallback: we'll place at fixed distance from camera on first tap
-          hitTestSource = null;
-          placementMode = 'fallback';
-          status.textContent = 'Hit Test غير متوفر؛ سيتم استعمال طريقة بديلة (وضع أمام الكاميرا). انقر على الشاشة للبدء.';
-        }
-
-        // set up tap-to-place
-        renderer.domElement.addEventListener('click', onCanvasClick);
-
-        // render loop
-        renderer.setAnimationLoop((time, frame) => {
-          if (!frame) {
-            renderer.clear();
-            renderer.render(scene, camera);
-            return;
-          }
-
-          // update camera from XR
-          const session = frame.session;
-          const pose = frame.getViewerPose(localReferenceSpace);
-          if (pose) {
-            // handle hit-test results if available
-            if (placementMode === 'hit' && hitTestSource) {
-              const hitResults = frame.getHitTestResults(hitTestSource);
-              if (hitResults.length > 0) {
-                const hit = hitResults[0];
-                const referenceSpace = localReferenceSpace;
-                const hitPose = hit.getPose(referenceSpace);
-                if (hitPose) {
-                  // place modelRoot at hit position
-                  modelRoot.visible = true;
-                  modelRoot.position.set(hitPose.transform.position.x, hitPose.transform.position.y, hitPose.transform.position.z);
-                  // orient model to face camera horizontally:
-                  const camPos = new THREE.Vector3().setFromMatrixPosition(renderer.xr.getCamera(camera).matrixWorld);
-                  const aim = new THREE.Vector3().copy(camPos);
-                  aim.y = modelRoot.position.y; // keep horizontal
-                  modelRoot.lookAt(aim);
-                }
-              }
-            }
-          }
-
-          renderer.render(scene, camera);
-        });
-
-        xrSession.addEventListener('end', onSessionEnd);
-      } catch (err) {
-        console.error('Failed to start XR session:', err);
-        status.textContent = 'فشل بدء AR: ' + (err && err.message ? err.message : err);
-        enterARBtn.disabled = false;
-      }
-    }
-
-    function onSessionEnd() {
-      placementMode = 'none';
-      hitTestSource = null;
-      xrSession = null;
-      modelRoot.visible = false;
-      status.textContent = 'انتهت جلسة AR.';
-      enterARBtn.disabled = false;
-    }
-
-    // On tap: if hit mode isn't producing results, fallback to placing object at fixed distance
-    function onCanvasClick(ev) {
-      if (!modelRoot) return;
-      if (placementMode === 'hit') {
-        // In hit mode we rely on continuous hit-test to show placement in render loop;
-        // a tap can "lock" the current position (we simply keep model visible).
-        modelRoot.visible = true;
-        status.textContent = 'تم تثبيت النموذج (بـ Hit Test).';
-      } else if (placementMode === 'fallback') {
-        // Place the object 1.5m in front of camera (in camera space)
-        const cameraObject = renderer.xr.getCamera(camera);
-        const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cameraObject.quaternion);
-        const camPos = new THREE.Vector3().setFromMatrixPosition(cameraObject.matrixWorld);
-        const placePos = camPos.clone().add(dir.multiplyScalar(1.5)); // 1.5m ahead
-        modelRoot.position.copy(placePos);
-        modelRoot.visible = true;
-        // orient to face camera
-        const aim = camPos.clone();
-        aim.y = modelRoot.position.y;
-        modelRoot.lookAt(aim);
-        status.textContent = 'تم وضع النموذج (طريقة بديلة — أمام الكاميرا).';
-      } else {
-        status.textContent = 'لم تبدأ جلسة AR بعد.';
-      }
-    }
-
-    // initial check
-    initXRCheck();
-
-    // resize handling
-    window.addEventListener('resize', () => {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-  </script>
+  window.location = "room.html?room=" + roomId + "&p=1";
+}
+</script>
 </body>
 </html>
